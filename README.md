@@ -1,6 +1,6 @@
 # LLM-Based PDF Summarizer
 
-NLP Project — Summarizes PDF documents and answers questions using Groq LLaMA 3.
+Summarizes PDF documents and answers questions using Groq LLaMA 3.
 
 ## Setup
 1. Clone the repo
