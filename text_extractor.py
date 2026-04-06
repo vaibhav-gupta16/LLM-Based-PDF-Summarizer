@@ -1,12 +1,12 @@
-import PyPDF2
+from pypdf import PdfReader
 import pdfplumber
  
 def extract_text(file_path: str) -> str:
-    """Extracts raw text from a PDF using PyPDF2 with pdfplumber fallback."""
+    """Extracts raw text from a PDF using pypdf with pdfplumber fallback."""
     text = ""
     try:
         with open(file_path, "rb") as f:
-            reader = PyPDF2.PdfReader(f)
+            reader = PdfReader(f)
             for page in reader.pages:
                 page_text = page.extract_text()
                 if page_text:
@@ -14,7 +14,7 @@ def extract_text(file_path: str) -> str:
     except Exception:
         pass
  
-    # Fallback to pdfplumber if PyPDF2 yields little text
+    # Fallback to pdfplumber if pypdf yields little text
     if len(text.strip()) < 100:
         text = ""
         try:
