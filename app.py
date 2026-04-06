@@ -1,15 +1,18 @@
-import streamlit as st
-st.set_page_config(page_title="LLM PDF Summarizer", page_icon="📄", layout="wide")
-import tempfile
 import os
-from pdf_validator     import validate_pdf
-from text_extractor    import extract_text
+import tempfile
+
+import streamlit as st
+
+from pdf_validator import validate_pdf
+from qa_engine import QAEngine
+from summarizer import generate_summary
+from text_extractor import extract_text
 from text_preprocessor import preprocess
-from summarizer        import generate_summary
-from qa_engine         import QAEngine
- 
-# ── Custom CSS ────────────────────────────────────────────────────
-st.markdown('''
+
+st.set_page_config(page_title="LLM PDF Summarizer", page_icon="PDF", layout="wide")
+
+st.markdown(
+    """
 <style>
   .block-container { padding-top: 2rem; }
   .summary-box {
@@ -29,117 +32,155 @@ st.markdown('''
     border-left: 4px solid #28a745;
     font-size: 15px;
   }
-</style>''', unsafe_allow_html=True)
- 
-st.title("📄 LLM-Based PDF Summarizer")
+</style>
+""",
+    unsafe_allow_html=True,
+)
+
+
+def reset_results() -> None:
+    st.session_state.summary = None
+    st.session_state.qa_engine = None
+    st.session_state.chunks = []
+    st.session_state.processed_files = []
+
+
+def process_uploaded_pdfs(uploaded_files):
+    all_chunks = []
+    processed_files = []
+    skipped_files = []
+    temp_paths = []
+
+    try:
+        for uploaded_file in uploaded_files:
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
+                tmp.write(uploaded_file.getbuffer())
+                tmp_path = tmp.name
+            temp_paths.append(tmp_path)
+
+            validation = validate_pdf(tmp_path)
+            if not validation["valid"]:
+                skipped_files.append(f"{uploaded_file.name}: {validation['message']}")
+                continue
+
+            raw_text = extract_text(tmp_path)
+            if not raw_text or len(raw_text.strip()) < 50:
+                skipped_files.append(
+                    f"{uploaded_file.name}: Could not extract enough readable text."
+                )
+                continue
+
+            chunks = preprocess(raw_text)
+            if not chunks:
+                skipped_files.append(
+                    f"{uploaded_file.name}: No usable text chunks were produced."
+                )
+                continue
+
+            labeled_chunks = [
+                f"Document: {uploaded_file.name}\n\n{chunk}" for chunk in chunks
+            ]
+            all_chunks.extend(labeled_chunks)
+            processed_files.append(uploaded_file.name)
+    finally:
+        for temp_path in temp_paths:
+            try:
+                os.unlink(temp_path)
+            except OSError:
+                pass
+
+    return all_chunks, processed_files, skipped_files
+
+
+if "summary" not in st.session_state:
+    reset_results()
+
+st.title("LLM-Based PDF Summarizer")
 st.markdown(
-    'Upload a PDF document to get an **AI-generated summary** '
-    'and **ask questions** about its content.'
+    "Upload one or more PDF files to generate a combined **AI summary** and "
+    "**ask questions** across all processed documents."
 )
- 
-# ── Session state ─────────────────────────────────────────────────
-if "summary"   not in st.session_state: st.session_state.summary   = None
-if "qa_engine" not in st.session_state: st.session_state.qa_engine = None
-if "chunks"    not in st.session_state: st.session_state.chunks    = None
- 
-# ── File upload ───────────────────────────────────────────────────
-uploaded_file = st.file_uploader(
-    "Upload PDF File",
+
+uploaded_files = st.file_uploader(
+    "Upload PDF file(s)",
     type=["pdf"],
-    help="Max file size: 10 MB"
+    accept_multiple_files=True,
+    help="You can upload and summarize multiple PDF files in one run.",
 )
- 
-if uploaded_file is not None:
-    # Save to a temp file so our modules can read it from disk
-    with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as tmp:
-        tmp.write(uploaded_file.read())
-        tmp_path = tmp.name
- 
-    # ── Step 1: Validate ──────────────────────────────────────────
-    with st.spinner('Validating PDF...'):
-        validation = validate_pdf(tmp_path)
- 
-    if not validation['valid']:
-        st.error(f"❌ Invalid PDF: {validation['message']}")
-        os.unlink(tmp_path)
-    else:
-        st.success(f"✅ {validation['message']}")
-        col1, col2 = st.columns([1, 1])
- 
-        with col1:
-            generate_btn = st.button(
-                "🔍 Generate Summary",
-                type="primary",
-                use_container_width=True
-            )
- 
-        if generate_btn:
-            # ── Step 2: Extract ───────────────────────────────────
-            with st.spinner('Extracting text from PDF...'):
-                raw_text = extract_text(tmp_path)
- 
-            if not raw_text or len(raw_text) < 50:
-                st.error('Could not extract text. '
-                         "The PDF may be scanned/image-based.")
-            else:
-                # ── Step 3: Preprocess ────────────────────────────
-                with st.spinner('Preprocessing text...'):
-                    chunks = preprocess(raw_text)
-                    st.session_state.chunks = chunks
-                st.info(f'Processing {len(chunks)} text chunk(s)...')
- 
-                # ── Step 4: Summarise ─────────────────────────────
-                with st.spinner(
-                    'Generating summary'
-                    '(may take 30–60 s on first run)...'
-                ):
-                    summary = generate_summary(chunks)
-                    st.session_state.summary = summary
- 
-                # ── Step 5: Build Q&A index ───────────────────────
-                with st.spinner('Building Q&A vector index...'):
-                    st.session_state.qa_engine = QAEngine(chunks)
- 
-                st.success('✅ Summary generated!')
- 
-        # ── Download button ───────────────────────────────────────
-        with col2:
-            if st.session_state.summary:
-                st.download_button(
-                    "⬇️ Download Summary (.txt)",
-                    data=st.session_state.summary,
-                    file_name="summary.txt",
-                    mime="text/plain",
-                    use_container_width=True
-                )
- 
-        # ── Display summary ───────────────────────────────────────
+
+if uploaded_files:
+    current_file_names = [file.name for file in uploaded_files]
+    if current_file_names != st.session_state.get("processed_files", []):
+        reset_results()
+
+    st.caption(f"{len(uploaded_files)} file(s) selected")
+    st.write(", ".join(current_file_names))
+
+    col1, col2 = st.columns([1, 1])
+
+    with col1:
+        generate_btn = st.button(
+            "Generate Summary",
+            type="primary",
+            use_container_width=True,
+        )
+
+    if generate_btn:
+        with st.spinner("Validating, extracting, and preprocessing PDFs..."):
+            chunks, processed_files, skipped_files = process_uploaded_pdfs(uploaded_files)
+
+        if skipped_files:
+            for skipped_file in skipped_files:
+                st.warning(skipped_file)
+
+        if not processed_files:
+            st.error("No valid PDF files were available to summarize.")
+        else:
+            st.session_state.chunks = chunks
+            st.session_state.processed_files = processed_files
+            st.success(f"Ready to summarize {len(processed_files)} PDF file(s).")
+            st.info(f"Processing {len(chunks)} text chunk(s) from the uploaded files.")
+
+            with st.spinner("Generating summary (this may take a minute)..."):
+                st.session_state.summary = generate_summary(chunks)
+
+            with st.spinner("Building Q&A vector index..."):
+                st.session_state.qa_engine = QAEngine(chunks)
+
+            st.success("Summary generated successfully.")
+
+    with col2:
         if st.session_state.summary:
-            st.subheader("📋 Generated Summary")
+            st.download_button(
+                "Download Summary (.txt)",
+                data=st.session_state.summary,
+                file_name="multi_pdf_summary.txt",
+                mime="text/plain",
+                use_container_width=True,
+            )
+
+    if st.session_state.summary:
+        st.subheader("Processed Files")
+        st.write(", ".join(st.session_state.processed_files))
+
+        st.subheader("Generated Summary")
+        st.markdown(
+            f'<div class="summary-box">{st.session_state.summary}</div>',
+            unsafe_allow_html=True,
+        )
+        st.markdown("---")
+
+        st.subheader("Ask a Question About the Documents")
+        question = st.text_input(
+            "Your question:",
+            placeholder="What are the common themes across these files?",
+        )
+        if st.button("Get Answer") and question:
+            with st.spinner("Finding answer..."):
+                answer = st.session_state.qa_engine.answer(question)
             st.markdown(
-                f'<div class="summary-box">{st.session_state.summary}</div>',
-                unsafe_allow_html=True
+                f'<div class="answer-box"><b>Answer:</b> {answer}</div>',
+                unsafe_allow_html=True,
             )
-            st.markdown('---')
- 
-            # ── Q&A section ───────────────────────────────────────
-            st.subheader("💬 Ask a Question About the Document")
-            question = st.text_input(
-                "Your question:",
-                placeholder="What is the main topic of this document?"
-            )
-            if st.button('Get Answer') and question:
-                with st.spinner('Finding answer...'):
-                    answer = st.session_state.qa_engine.answer(question)
-                st.markdown(
-                    f'<div class="answer-box"><b>Answer:</b> {answer}</div>',
-                    unsafe_allow_html=True
-                )
- 
-        # Cleanup temp file
-        try:
-            os.unlink(tmp_path)
-        except Exception:
-            pass
- 
-st.markdown('---')
+
+st.markdown("---")
