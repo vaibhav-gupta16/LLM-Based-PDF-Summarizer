@@ -49,8 +49,7 @@ streamlit run app.py
 5. Download the summary if needed.
 
 ## Notes
-- This project now uses Groq for both summarization and question answering. The older Hugging Face, FAISS, and NumPy retrieval stack has been removed.
-- This project is set up to work with current Python releases by using modern dependency ranges instead of old strict pins.
+- This project now uses Groq for both summarization and question answering.
 - Text-based PDFs work best. Scanned or image-only PDFs may not extract enough text.
 - Very large batches may take longer because each chunk is summarized before the final combined summary is generated.
 - If some files fail validation or text extraction, the app will warn you and continue processing the remaining files.
