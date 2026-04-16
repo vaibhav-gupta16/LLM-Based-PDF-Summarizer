@@ -1,8 +1,6 @@
 import os
 import tempfile
-
 import streamlit as st
-
 from pdf_validator import validate_pdf
 from qa_engine import QAEngine
 from summarizer import generate_summary
